@@ -640,6 +640,9 @@ class BenchmarkRunner:
     def get_tolerance(self, is_training, current_device, name):
         raise NotImplementedError()
 
+    def adjust_model_iter_fn(self, model_iter_fn, name):
+        return model_iter_fn
+
     def run_one_model(
         self,
         name,
@@ -1206,8 +1209,6 @@ def main(runner, original_dir=None):
 
     runner.setup_amp()
 
-    experiment = functools.partial(experiment, args, model_iter_fn)
-
     cos_similarity = args.cosine
 
     if output_filename:
@@ -1234,6 +1235,8 @@ def main(runner, original_dir=None):
             elif args.float16:
                 model, example_inputs = cast_to_fp16(model, example_inputs)
 
+            model_iter_fn = runner.adjust_model_iter_fn(model_iter_fn, name)
+            experiment = functools.partial(experiment, args, model_iter_fn)
             runner.run_one_model(
                 name,
                 model,
@@ -1279,6 +1282,9 @@ def main(runner, original_dir=None):
                 model, example_inputs = cast_to_fp32(model, example_inputs)
             elif args.float16:
                 model, example_inputs = cast_to_fp16(model, example_inputs)
+
+            model_iter_fn = runner.adjust_model_iter_fn(model_iter_fn, name)
+            experiment = functools.partial(experiment, args, model_iter_fn)
             runner.run_one_model(
                 name,
                 model,
