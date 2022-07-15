@@ -682,11 +682,11 @@ class MiscTests(torchdynamo.testing.TestCase):
         args2 = dict(args1)
         assert fn(args1) is args1
         cnts = torchdynamo.testing.CompileCounter()
-        with torchdynamo.optimize(cnts):
+        with torchdynamo.optimize_assert(cnts):
             self.assertIs(fn(args2), args2)
             self.assertTrue(same(args1, args2))
         self.assertEqual(cnts.frame_count, 1)
-        self.assertEqual(cnts.op_count, 1)
+        self.assertEqual(cnts.op_count, 2)
 
     def test_module_deepcopy(self):
         m1 = torch.nn.Sequential(
@@ -898,7 +898,7 @@ class MiscTests(torchdynamo.testing.TestCase):
         obj2 = fn(x1)([])
 
         cnts = torchdynamo.testing.CompileCounter()
-        with torchdynamo.optimize_assert(cnts):
+        with torchdynamo.optimize(cnts):
             obj1 = fn(x1)([])
         self.assertTrue(same(obj1, obj2))
         self.assertEqual(cnts.frame_count, 2)
@@ -1313,11 +1313,11 @@ class MiscTests(torchdynamo.testing.TestCase):
         sub_of_foo_subclass_var_optim = list()
         counter = CompileCounter()
 
-        @torchdynamo.optimize_assert(counter)
+        @torchdynamo.optimize(counter)
         def fn():
             return Foo.__subclasses__()
 
-        @torchdynamo.optimize_assert(counter)
+        @torchdynamo.optimize(counter)
         def fn_single(subs_of_foo_optim):
             return subs_of_foo_optim[0].__subclasses__()
 

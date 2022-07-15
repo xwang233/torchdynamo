@@ -35,6 +35,9 @@ class UserDefinedClassVariable(UserDefinedVariable):
     def as_python_constant(self):
         return self.value
 
+    def as_proxy(self):
+        return self.value
+
     def var_getattr(self, tx, name: str) -> "VariableTracker":
         options = VariableTracker.propagate(self)
         try:
@@ -321,10 +324,13 @@ class UserDefinedObjectVariable(UserDefinedVariable):
             and not callable(value)
         ):
             if not source:
-                assert getattr(
-                    importlib.import_module(type(value).__module__),
-                    type(value).__name__,
-                ) is type(value)
+                assert (
+                    getattr(
+                        importlib.import_module(type(value).__module__),
+                        type(value).__name__,
+                    )
+                    is type(value)
+                )
                 source = AttrSource(
                     AttrSource(
                         tx.import_source(type(value).__module__), type(value).__name__
