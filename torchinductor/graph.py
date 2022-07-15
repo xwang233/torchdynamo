@@ -134,7 +134,7 @@ class GraphLowering(torch.fx.Interpreter):
             except Exception:
                 log.warning("error in realize_users_of", exc_info=True)
 
-    def add_tensor_constant(self, data):
+    def add_tensor_constant(self, data, is_none: False):
         def allocate():
             for name, value in self.constants.items():
                 if data is value:
@@ -144,7 +144,12 @@ class GraphLowering(torch.fx.Interpreter):
             return name
 
         return TensorBox.create(
-            ir.ConstantBuffer(
+            ir.NoneAsConstantBuffer(
+                allocate(),
+                FixedLayout(data.device, data.dtype, *self.static_sizes_strides(data)),
+            )
+            if is_none
+            else ir.ConstantBuffer(
                 allocate(),
                 FixedLayout(data.device, data.dtype, *self.static_sizes_strides(data)),
             )
