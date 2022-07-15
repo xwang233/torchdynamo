@@ -31,13 +31,28 @@ class BaseListVariable(VariableTracker):
         self.items: List[VariableTracker] = items
 
     def _as_proxy(self):
+        for x in self.items:
+            print("AS_PROXY_CLASS", x, x.__class__)
         return [x.as_proxy() for x in self.items]
 
     def as_python_constant(self):
         return self.python_type()([x.as_python_constant() for x in self.items])
 
     def as_proxy(self):
-        return self.python_type()(self._as_proxy())
+        from inspect import signature
+
+        print("AS PROXY ON SELF:", self._as_proxy().__class__)
+        proxied = self._as_proxy()
+        print("HERE?", proxied.__class__)
+        print("HERE", proxied)
+        from inspect import signature
+
+        print(f"SIG: ", len(signature(self.python_type()).parameters))
+        sig_len = len(signature(self.python_type()).parameters)
+        if isinstance(proxied, list) and len(proxied) > 1 and sig_len > 1:
+            return self.python_type()(*proxied)
+        else:
+            return self.python_type()(proxied)
 
     def getitem_const(self, arg: VariableTracker):
         index = arg.as_python_constant()

@@ -99,12 +99,17 @@ class Guard:
         return self.sort_key() < other.sort_key()
 
     def __str__(self):
+        # Certain custom objects can cause this repr to throw (ex: misimplimented getattr)
+        try:
+            obj_weakref_str = f"{self.obj_weakref}"
+        except:
+            obj_weakref_str = id(self.obj_weakref)
         s = f"""
-            {self.source.name.lower()} {repr(self.name)} {self.create_fn.__name__}"
             {{
+                {self.source.name.lower()} {repr(self.name)} {self.create_fn.__name__}"
                 'guard_types': {self.guard_types},
                 'code': {self.code_list},
-                'obj_weakref': {self.obj_weakref}
+                'obj_weakref': {obj_weakref_str}
                 'guarded_class': {self.guarded_class_weakref}
             }}
             """

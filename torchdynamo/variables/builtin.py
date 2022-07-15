@@ -259,6 +259,8 @@ class BuiltinVariable(VariableTracker):
         if self.can_insert_in_graph() and correct_args:
             try:
                 fn = self.fn
+                print("HANDLING", fn)
+                print("WITH ARGS", args)
                 if self.fn is operator.iadd and isinstance(
                     args[0], variables.ConstantVariable
                 ):
@@ -293,7 +295,34 @@ class BuiltinVariable(VariableTracker):
                         need_unwrap=need_unwrap,
                         **options,
                     )
+                elif (
+                    fn is operator.getitem
+                    and len(args) == 2
+                    and isinstance(args[0], variables.BaseListVariable)
+                    and isinstance(args[1], variables.ConstantVariable)
+                ):
+                    collection = args[0]
+                    index = args[1]
+                    return collection.getitem_const(index)
+                elif (
+                    fn is operator.getitem
+                    and len(args) == 2
+                    and isinstance(args[0], variables.UserDefinedObjectVariable)
+                    and isinstance(args[1], variables.ConstantVariable)
+                ):
+                    print("HIT CONDITIONS")
+                    user_defined = args[0]
+                    index = args[1]
+                    value = getattr(user_defined.value, index.as_python_constant())
+                    return VariableBuilder(tx, user_defined.source)(value)
+                    # if isinstance(value, torch.Tensor):
+                    #     return variables.TensorVariable.create(tx, proxy, **options)
+                    # elif variables.ConstantVariable.is_literal(value):
+                    #     return variables.ConstantVariable(
+                    #     value.
+                    #     **options)
                 else:
+                    print("FELL TO ELSE")
                     return variables.TensorVariable.create(tx, proxy, **options)
 
             except NotImplementedError:

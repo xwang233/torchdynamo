@@ -308,7 +308,7 @@ class MiscTests(torchdynamo.testing.TestCase):
         with torchdynamo.optimize(cnts):
             self.assertEqual(fn({"a": v1, "b": v2})[0], -200)
         self.assertEqual(cnts.frame_count, 1)
-        self.assertEqual(cnts.op_count, 2)
+        self.assertEqual(cnts.op_count, 4)
 
     def test_tensor_dict2(self):
         def fn1(inputs):
@@ -337,7 +337,7 @@ class MiscTests(torchdynamo.testing.TestCase):
             self.assertEqual(fn2({"a": v1, "b": v2})[0], 300)
             self.assertEqual(fn3({"a": v1, "b": v2})[0], 300)
         self.assertEqual(cnts.frame_count, 3)
-        self.assertEqual(cnts.op_count, 9)
+        self.assertEqual(cnts.op_count, 11)
 
     def test_dictcomp(self):
         def fn1(inputs):
@@ -447,10 +447,10 @@ class MiscTests(torchdynamo.testing.TestCase):
         v1 = torch.Tensor([10])
         v2 = torch.Tensor([20])
         cnts = torchdynamo.testing.CompileCounter()
-        with torchdynamo.optimize(cnts):
+        with torchdynamo.optimize_assert(cnts):
             self.assertEqual(fn(v1, v2).ab, 50)
         self.assertEqual(cnts.frame_count, 1)
-        self.assertEqual(cnts.op_count, 2)
+        self.assertEqual(cnts.op_count, 3)
 
     def test_namedtuple2(self):
         def fn(packed):
@@ -467,7 +467,7 @@ class MiscTests(torchdynamo.testing.TestCase):
         with torchdynamo.optimize(cnts):
             self.assertEqual(fn(mytuple(v1, v2, v3))[0], 7)
         self.assertEqual(cnts.frame_count, 1)
-        self.assertEqual(cnts.op_count, 3)
+        self.assertEqual(cnts.op_count, 4)
 
     def test_range_input(self):
         def fn(a, rng):
@@ -551,8 +551,8 @@ class MiscTests(torchdynamo.testing.TestCase):
 
     def test_user_getattr1(self):
         class MyConfig(dict):
-            def __getattr__(self, name):
-                return self[name]
+            def __getattr__(self, x):
+                return self[x]
 
         def fn(cfg, x, y):
             return x + y + cfg.offset
@@ -560,7 +560,7 @@ class MiscTests(torchdynamo.testing.TestCase):
         x = torch.randn(10)
         cfg = MyConfig(offset=5)
         cnts = torchdynamo.testing.CompileCounter()
-        with torchdynamo.optimize(cnts):
+        with torchdynamo.optimize_assert(cnts):
             self.assertTrue(same(fn(cfg, x, x), 2 * x + 5))
         self.assertEqual(cnts.frame_count, 1)
         self.assertEqual(cnts.op_count, 2)
