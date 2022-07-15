@@ -274,7 +274,11 @@ class UserDefinedObjectVariable(UserDefinedVariable):
             # getattr_static doesn't work on these
             subobj = getattr(self.value, name)
         else:
-            subobj = inspect.getattr_static(self.value, name)
+            try:
+                subobj = inspect.getattr_static(self.value, name)
+            except AttributeError:
+                # getattr_static does not triger dynamic attribute handling
+                subobj = getattr(self.value, name)
         return subobj
 
     def var_getattr(self, tx, name):
