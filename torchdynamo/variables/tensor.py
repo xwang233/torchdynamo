@@ -235,6 +235,9 @@ class TensorVariable(VariableTracker):
                 need_unwrap=False,
                 **options,
             )
+        elif isinstance(example_value, int) and proxy.node.target is operator.getitem:
+            # For cases like x.shape[k] (ex: my_tensor[0] -> 10)
+            return variables.ConstantVariable(example_value, **options)
         else:
             assert (
                 False
