@@ -257,7 +257,13 @@ class HuggingfaceRunner(BenchmarkRunner):
         super(HuggingfaceRunner, self).__init__()
 
     def load_model(
-        self, device, model_name, is_training, use_eval_mode, batch_size=None
+        self,
+        device,
+        model_name,
+        is_training,
+        use_eval_mode,
+        batch_size=None,
+        dynamic_shapes=False,
     ):
         dtype = torch.float32
         config, model_cls, batch_size_default, input_fn = ALL_MODELS[model_name]
@@ -322,10 +328,11 @@ class HuggingfaceRunner(BenchmarkRunner):
         else:
             return torch.no_grad()
 
-    def get_tolerance(self, is_training, current_device, name):
+    def get_tolerance_and_cosine_flag(self, is_training, current_device, name):
+        cosine = self.args.cosine
         if is_training:
-            return 1e-2
-        return 1e-3
+            return 1e-2, cosine
+        return 1e-3, cosine
 
     def compute_loss(self, pred):
         return pred[0]
