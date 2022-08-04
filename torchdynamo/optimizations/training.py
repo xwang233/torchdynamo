@@ -233,7 +233,8 @@ class AotPrimsNvfuser(AotAutogradStrategy):
             aten.native_batch_norm_backward,
         }
 
-        self.aten2aten_decompositions = get_decompositions(default_decompositions)
+        # self.aten2aten_decompositions = get_decompositions(default_decompositions)
+        self.aten2aten_decompositions = {}
 
     def candidate(self):
         return BACKENDS["aot_autograd"](
