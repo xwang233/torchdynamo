@@ -4,11 +4,13 @@ import dataclasses
 import functools
 import itertools
 import logging
+import os
 from typing import Any
 from typing import Dict
 from typing import List
 
 import numpy as np
+import sympy
 import torch
 
 from . import config
@@ -24,6 +26,8 @@ template_kernels = [ir.Convolution]
 
 log = logging.getLogger(__name__)
 
+INDUCTOR_SCHEDULER_GRAPH = bool(os.environ.get("INDUCTOR_SCHEDULER_GRAPH", None) == "1")
+
 
 def cmp(a, b):
     return int(a > b) - int(a < b)
@@ -34,7 +38,8 @@ def should_use_template(node: ir.ExternKernel):
         type(node) in template_kernels
         and ir.is_triton(node.get_device())
         # TODO(jansel): extend this to other kernels
-        and config.triton.convolution != "aten"
+        # check the kernel rather than config
+        and node.kernel != "aten.convolution"
     )
 
 
@@ -239,7 +244,7 @@ class SchedulerNode(BaseSchedulerNode):
         (
             self._sizes,
             self._body,
-        ) = node.simplify_reorder_and_tile()
+        ) = node.simplify_and_reorder()
 
         self.group = (node.get_device(), group_fn(self._sizes))
         self.set_read_writes(
@@ -328,9 +333,16 @@ class SchedulerNode(BaseSchedulerNode):
         super().allocate()
 
     def run(self, *index_vars):
+        self.mark_run()
+        self.codegen(index_vars)
+
+    def mark_run(self):
         log.info(f"RUN {self.get_name()}")
         self.allocate()
         self.scheduler.run_count += 1
+        self.scheduler.pending_buffer_names.add(self.get_name())
+
+    def codegen(self, index_vars):
         sizes = self._sizes
         assert sum(map(len, sizes)) == sum(map(len, index_vars))
         var_ranges = dict(
@@ -343,7 +355,17 @@ class SchedulerNode(BaseSchedulerNode):
             SimplifyIndexing(V.get_ops_handler(), var_ranges)
         ), V.kernel.set_current_node(self):
             self._body(*index_vars)
-        self.scheduler.pending_buffer_names.add(self.get_name())
+
+    def pointwise_read_writes(self):
+        """
+        Get the memory dependencies in the non-reduction axis.
+        """
+        sizes, reduction_sizes = self._sizes
+
+        def fn(index):
+            return self._body(index, [sympy.Integer(0) for _ in reduction_sizes])
+
+        return dependencies.extract_read_writes(fn, sizes)
 
     def can_inplace(self, read_dep: dependencies.MemoryDep):
         if self.node.get_alias_names():
@@ -418,6 +440,108 @@ class NodeUser:
         return self.node.get_name()
 
 
+def get_fake_func(name):
+    def func1(*args):
+        return 0
+
+    func1.__name__ = name
+    return func1
+
+
+def create_fx_from_buffers(nodes, fname, print_graph=False):
+    """
+    Draw a graph in fname.svg.
+    nodes is a list of SchedulerNode objects.
+    """
+
+    from functorch._src.partitioners import draw_graph
+    from torch.fx.graph_module import GraphModule
+    from torch.fx.passes.shape_prop import TensorMetadata
+    from torch.fx.passes.tools_common import legalize_graph
+
+    func_dict = {}
+    name_to_fx_node = {}
+    graph = torch.fx.Graph()
+    first_node = None
+
+    # create call_function node for each Buffer and Kernel
+    for snode in nodes:
+        node = snode.node
+        name = node.get_name()
+        node_type = str(type(node)).split(".")[-1].replace("'>", "")
+
+        if node_type in func_dict:
+            fake_f = func_dict[node_type]
+        else:
+            fake_f = get_fake_func(node_type)
+            func_dict[node_type] = fake_f
+        fx_node = graph.call_function(fake_f, args=(), kwargs=None)
+        fx_node.name = name
+
+        # gather meta data
+        dtype = None
+        if isinstance(node, ir.ComputedBuffer):
+            dtype = node.data.dtype
+
+        try:
+            stride = node.get_stride()
+        except AttributeError:
+            stride = None
+
+        layout = type(node.layout)
+
+        if isinstance(snode, NopKernelSchedulerNode):
+            group = "nop"
+        elif isinstance(snode, ExternKernelSchedulerNode):
+            if should_use_template(node):
+                group = snode.group[1]
+            else:
+                group = "extern"
+        else:  # SchedulerNode
+            group = snode.group[1]
+
+        metadata = TensorMetadata(group, dtype, False, stride, layout, None, None)
+        fx_node.meta["tensor_meta"] = metadata
+
+        name_to_fx_node[name] = fx_node
+        if first_node is None:
+            first_node = fx_node
+
+    # create edges between nodes
+    for snode in nodes:
+        node = snode.node
+        name = node.get_name()
+        deps = node.get_reads()
+        fx_node = name_to_fx_node[name]
+
+        new_args = []
+        for dep in deps:
+            if dep.name in name_to_fx_node:
+                dep_node = name_to_fx_node[dep.name]
+            else:
+                with graph.inserting_before(first_node):
+                    dep_node = graph.placeholder(dep.name)
+                    name_to_fx_node[dep.name] = dep_node
+            new_args.append(dep_node)
+
+        fx_node.args = tuple(new_args)
+
+    outputs = []
+    for _, v in name_to_fx_node.items():
+        if len(v.users) == 0:
+            outputs.append(v)
+    graph.output(outputs[0] if len(outputs) == 1 else tuple(outputs))
+
+    if print_graph:
+        print(graph)
+    print("starting creating module")
+    gm = GraphModule({}, graph)
+    graph = legalize_graph(gm)
+    gm.graph.lint()
+    print("starting drawing")
+    draw_graph(gm, fname, clear_meta=False)
+
+
 class Scheduler:
     def __init__(self, nodes):
         super(Scheduler, self).__init__()
@@ -457,6 +581,21 @@ class Scheduler:
             else:
                 assert False, node
         self.name_to_node = {node.get_name(): node for node in self.nodes}
+
+        if INDUCTOR_SCHEDULER_GRAPH:
+
+            try:
+                from functorch._src.aot_autograd import get_graph_being_compiled
+
+                graph_name = get_graph_being_compiled()
+            except ImportError:
+                logging.warning(
+                    "Could not get graph name from `get_graph_being_compiled` \
+                    in functorch, use 'model' as default"
+                )
+                graph_name = "model"
+
+            create_fx_from_buffers(self.nodes, graph_name, print_graph=True)
 
         # some new constants could have been created above
         self.available_buffer_names.update(V.graph.constants.keys())
@@ -634,9 +773,11 @@ class Scheduler:
             def gc(d):
                 return {k: v for k, v in d.items() if any(v)}
 
-            log.info(f"blocked names: {gc(self.blocked_nodes.dep_to_nodes)}")
-            log.info(f"blocked deps: {gc(self.blocked_nodes.name_to_nodes)}")
-            log.info(f"new fusable_deps: {self.fusable_deps}")
+            names = gc(self.blocked_nodes.dep_to_nodes)
+            deps = gc(self.blocked_nodes.name_to_nodes)
+            if names or deps:
+                log.info(f"blocked names: {names} deps: {deps}")
+                log.info(f"new fusable_deps: {self.fusable_deps}")
 
         while self.pending_buffer_names:
             self.available_buffer_names.update(self.pending_buffer_names)
