@@ -44,6 +44,12 @@ except ImportError:
     def set_model_name(name):
         pass
 
+try:
+    import numpy as np
+    from sklearn.linear_model import RANSACRegressor
+    has_sklearn = True
+except ImportError:
+    has_sklearn = False
 
 log = logging.getLogger(__name__)
 
@@ -107,16 +113,43 @@ def print_summary(filename):
             pass
 
 
-def timed(model, model_iter_fn, example_inputs, times=1, return_result=False):
+def timed(model, model_iter_fn, example_inputs, times=20, return_result=False):
     synchronize()
     torch.manual_seed(1337)
-    t0 = time.perf_counter()
+
+    events = [torch.cuda.Event(enable_timing=True) for _ in range(times)]
+    end_event = torch.cuda.Event(enable_timing=True)
     # Dont collect outputs to correctly measure timing
-    for _ in range(times):
+
+    # warmup
+    for _ in range(10):
+        model_iter_fn(model, example_inputs, collect_outputs=False)
+
+    for i in range(times):
         result = model_iter_fn(model, example_inputs, collect_outputs=False)
-        synchronize()
-    t1 = time.perf_counter()
-    return (t1 - t0, result) if return_result else t1 - t0
+        events[i].record()
+    
+    end_event.record()
+    synchronize()
+
+    xtimes = []
+    for event in events:
+        xtimes.append(event.elapsed_time(end_event))
+    
+    if has_sklearn:
+        # use a robust linear regression model
+        lr = RANSACRegressor()
+        lr.fit(np.arange(times).reshape(-1, 1), np.asarray(xtimes).reshape(-1, 1))
+        step_time_ms = -lr.estimator_.coef_[0, 0]
+    else:
+        # use a default linear regression
+        linreg = torch.linalg.lstsq(
+            torch.vstack([torch.arange(times), torch.ones(times)]).T,
+            torch.tensor(xtimes),
+            rcond=False)
+        step_time_ms = -linreg[0][0].item()
+
+    return (step_time_ms, result) if return_result else step_time_ms
 
 
 class Stats:
@@ -355,8 +388,9 @@ def speedup_experiment(args, model_iter_fn, model, example_inputs):
         name = os.path.join(torchdynamo.config.base_dir, name)
         p.export_chrome_trace(name)
     pvalue = ttest_ind(timings[:, 0], timings[:, 1]).pvalue
-    median = np.median(timings, axis=0)
+    median = np.mean(timings, axis=0)
     speedup = median[0] / median[1]
+    print(current_batch_size / median[0], current_batch_size / median[1])
     if args.dump_raw_metrics:
         np.save(
             f"{output_filename[:-4]}-raw_timings-{current_name}-{current_device}.npy",
