@@ -359,7 +359,8 @@ class CudaGraphModule(Module):
             stream = torch.cuda.Stream()
             stream.wait_stream(torch.cuda.current_stream())
             with torch.cuda.stream(stream):
-                r = self.gm(*args)
+                for i in range(3):
+                    r = self.gm(*args)
             torch.cuda.current_stream().wait_stream(stream)
             self.warmed_up = True
             return r
