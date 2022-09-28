@@ -1417,7 +1417,7 @@ def parse_args():
         default=False,
         help="use channels last format",
     )
-    parser.add_argument("--batch_size", type=int, help="batch size for benchmarking")
+    parser.add_argument("--batch_size", type=int, help="batch size for benchmarking", default=1)
     parser.add_argument(
         "--batch-size-file", type=str, help="String to load batch size from"
     )
