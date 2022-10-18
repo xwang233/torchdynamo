@@ -1974,24 +1974,9 @@ def main(runner, original_dir=None):
         if original_dir:
             os.chdir(original_dir)
 
-        def _model_run_helper(name_, num_forks):
-            current_name = name_
-            placeholder_batch_size = 0
-            env = os.environ.copy()
-            if num_forks > 1:
-                env['CUDA_VISIBLE_DEVICES'] = str(multiprocessing.current_process()._identity[0] % num_forks)
-            try:
-                subprocess.check_call([sys.executable] + sys.argv + [f"--only={name_}"], env=env)
-            except subprocess.SubprocessError:
-                print("ERROR")
-                for device in args.devices:
-                    output_csv(
-                        output_filename, [], [device, name_, placeholder_batch_size, 0.0]
-                    )
-
         if not args.run_in_parallel:
             for name in runner.iter_model_names(args):
-                _model_run_helper(name, 1)
+                _model_run_helper(name, args, 1)
         else:
             assert torch.cuda.is_available()
 
@@ -2002,10 +1987,25 @@ def main(runner, original_dir=None):
             num_forks = max(1, min(ngpus, nprocs - 2))
 
             with multiprocessing.Pool(num_forks) as mp_pool:
-                mp_pool.starmap(_model_run_helper, ((_model, num_forks) for _model in runner.iter_model_names(args)))
+                mp_pool.starmap(_model_run_helper, ((_model, args, num_forks) for _model in runner.iter_model_names(args)))
 
         print_summary(output_filename)
 
+def _model_run_helper(name_, args, num_forks):
+    current_name = name_
+    placeholder_batch_size = 0
+    env = os.environ.copy()
+    if num_forks > 1:
+        import multiprocessing
+        env['CUDA_VISIBLE_DEVICES'] = str(multiprocessing.current_process()._identity[0] % num_forks)
+    try:
+        subprocess.check_call([sys.executable] + sys.argv + [f"--only={name_}"], env=env)
+    except subprocess.SubprocessError:
+        print("ERROR")
+        for device in args.devices:
+            output_csv(
+                output_filename, [], [device, name_, placeholder_batch_size, 0.0]
+            )
 
 def log_operator_inputs(model, example_inputs, model_iter_fn, name, args):
     mode = "training" if args.training else "eval"
