@@ -1985,6 +1985,7 @@ def main(runner, original_dir=None):
             nprocs = int(p_nprocs.stdout)
             ngpus = torch.cuda.device_count()
             num_forks = max(1, min(ngpus, nprocs - 2))
+            print(f'run in parallel with {num_forks = }')
 
             with multiprocessing.Pool(num_forks) as mp_pool:
                 mp_pool.starmap(_model_run_helper, ((_model, args, num_forks) for _model in runner.iter_model_names(args)))
