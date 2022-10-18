@@ -1489,6 +1489,12 @@ def parse_args():
         help="Use a fresh triton cachedir when running each model, to force cold-start compile.",
     )
 
+    parser.add_argument(
+        "--run-in-parallel",
+        action="store_true",
+        help="Run different models on different CUDA devices in parallel to speedup benchmark process."
+    )
+
     group_fuser = parser.add_mutually_exclusive_group()
     # --nvfuser is now the default, keep the option to not break scripts
     group_fuser.add_argument("--nvfuser", action="store_true", help=argparse.SUPPRESS)
@@ -1967,17 +1973,37 @@ def main(runner, original_dir=None):
             os.unlink(output_filename)
         if original_dir:
             os.chdir(original_dir)
-        for name in runner.iter_model_names(args):
-            current_name = name
+
+        def _model_run_helper(name_, num_forks):
+            current_name = name_
             placeholder_batch_size = 0
+            env = os.environ.copy()
+            if num_forks > 1:
+                env['CUDA_VISIBLE_DEVICES'] = str(multiprocessing.current_process()._identity[0] % num_forks)
             try:
-                subprocess.check_call([sys.executable] + sys.argv + [f"--only={name}"])
+                subprocess.check_call([sys.executable] + sys.argv + [f"--only={name_}"], env=env)
             except subprocess.SubprocessError:
                 print("ERROR")
                 for device in args.devices:
                     output_csv(
-                        output_filename, [], [device, name, placeholder_batch_size, 0.0]
+                        output_filename, [], [device, name_, placeholder_batch_size, 0.0]
                     )
+
+        if not args.run_in_parallel:
+            for name in runner.iter_model_names(args):
+                _model_run_helper(name, 1)
+        else:
+            assert torch.cuda.is_available()
+
+            import multiprocessing
+            p_nprocs = subprocess.run(['nproc'], stdout=subprocess.PIPE)
+            nprocs = int(p_nprocs.stdout)
+            ngpus = torch.cuda.device_count()
+            num_forks = max(1, min(ngpus, nprocs - 2))
+
+            with multiprocessing.Pool(num_forks) as mp_pool:
+                mp_pool.starmap(_model_run_helper, ((_model, num_forks) for _model in runner.iter_model_names(args)))
+
         print_summary(output_filename)
 
 
