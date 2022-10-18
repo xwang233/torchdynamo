@@ -1995,18 +1995,32 @@ def main(runner, original_dir=None):
 def _model_run_helper(name_, args, num_forks):
     current_name = name_
     placeholder_batch_size = 0
+
+    import sys
     env = os.environ.copy()
-    if num_forks > 1:
+    stdout_stream = sys.stdout
+    stderr_stream = sys.stderr
+
+    run_in_parallel = args.run_in_parallel and num_forks > 1
+    if run_in_parallel:
         import multiprocessing
-        env['CUDA_VISIBLE_DEVICES'] = str(multiprocessing.current_process()._identity[0] % num_forks)
+        gpu_index = multiprocessing.current_process()._identity[0] % num_forks
+        env['CUDA_VISIBLE_DEVICES'] = str(gpu_index)
+        stdout_stream = open(f'{name_}_{args.output[:-4]}.txt', 'w')
+        stderr_stream = subprocess.STDOUT
+        print(f'started model {name_} on {gpu_index = }')
     try:
-        subprocess.check_call([sys.executable] + sys.argv + [f"--only={name_}"], env=env)
+        subprocess.check_call([sys.executable] + sys.argv + [f"--only={name_}"], env=env, stdout=stdout_stream, stderr=stderr_stream)
     except subprocess.SubprocessError:
-        print("ERROR")
+        print("ERROR", f"on model {name_}" if run_in_parallel else "")
         for device in args.devices:
             output_csv(
                 output_filename, [], [device, name_, placeholder_batch_size, 0.0]
             )
+    finally:
+        if run_in_parallel:
+            stdout_stream.close()
+            print(f'finished model {name_}')
 
 def log_operator_inputs(model, example_inputs, model_iter_fn, name, args):
     mode = "training" if args.training else "eval"
